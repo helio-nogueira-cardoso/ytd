@@ -1,45 +1,78 @@
 import streamlit as st
-from pytube import YouTube
+import yt_dlp
 import os
+import re
 import time
-from tempfile import NamedTemporaryFile, gettempdir
+from tempfile import gettempdir
+
+def sanitize_filename(name):
+    name = re.sub(r'[\\/*?:"<>|]', '_', name)
+    return name.strip()[:120] or 'video'
 
 def download_video(url):
-    yt = YouTube(url)
-    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-    if stream:
-        # Save the video to a temporary file
-        temp_file = NamedTemporaryFile(delete=False, suffix='.mp4')
-        stream.download(filename=temp_file.name)
-        return temp_file.name
-    return None
+    out_dir = gettempdir()
+    outtmpl = os.path.join(out_dir, 'ytd_%(id)s.%(ext)s')
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': outtmpl,
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'merge_output_format': 'mp4',
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filepath = ydl.prepare_filename(info)
+    if not os.path.exists(filepath):
+        base, _ = os.path.splitext(filepath)
+        for ext in ('.mp4', '.mkv', '.webm'):
+            candidate = base + ext
+            if os.path.exists(candidate):
+                filepath = candidate
+                break
+    title = info.get('title') if isinstance(info, dict) else None
+    return filepath, title
 
-def cleanup_old_files(directory, file_extension='.mp4', age_limit_seconds=5):
-    """Deletes files with a specific extension and older than 'age_limit_seconds' in the given directory."""
+def cleanup_old_files(directory, prefix='ytd_', age_limit_seconds=600):
     current_time = time.time()
-    for filename in os.listdir(directory):
-        if filename.endswith(file_extension):
-            file_path = os.path.join(directory, filename)
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return
+    for filename in entries:
+        if not filename.startswith(prefix):
+            continue
+        file_path = os.path.join(directory, filename)
+        try:
             if os.path.isfile(file_path) and current_time - os.path.getmtime(file_path) > age_limit_seconds:
                 os.remove(file_path)
+        except OSError:
+            pass
 
 def main():
     st.title('YouTube Video Downloader')
     st.text('by Helio Nogueira Cardoso')
     url = st.text_input('Enter YouTube URL')
     if st.button('Download'):
-        # Schedule a cleanup for old files
+        if not url:
+            st.warning('Please enter a YouTube URL.')
+            return
         cleanup_old_files(gettempdir())
-        filepath = download_video(url)
-        if filepath:
-            st.success('Download successful! Click below to download the video to your device.')
-            # Provide a link for the user to download the video
-            with open(filepath, "rb") as file:
-                btn = st.download_button(
-                    label="Download Video",
+        try:
+            with st.spinner('Downloading...'):
+                filepath, title = download_video(url)
+        except Exception as e:
+            st.error(f'Download failed: {e}')
+            return
+        if filepath and os.path.exists(filepath):
+            st.success('Download successful! Click below to save the video to your device.')
+            filename = sanitize_filename(title or 'video') + os.path.splitext(filepath)[1]
+            with open(filepath, 'rb') as file:
+                st.download_button(
+                    label='Download Video',
                     data=file,
-                    file_name="downloaded_video.mp4",
-                    mime="video/mp4"
+                    file_name=filename,
+                    mime='video/mp4',
                 )
         else:
             st.error('Download failed. Check the URL and try again.')
