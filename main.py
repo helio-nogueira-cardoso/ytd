@@ -5,6 +5,7 @@ import re
 import time
 import traceback
 from tempfile import gettempdir
+from yt_dlp.networking.impersonate import ImpersonateTarget
 
 def sanitize_filename(name):
     name = re.sub(r'[\\/*?:"<>|]', '_', name)
@@ -18,7 +19,7 @@ def download_video(url):
         'outtmpl': outtmpl,
         'noplaylist': True,
         'merge_output_format': 'mp4',
-        'impersonate': 'chrome',
+        'impersonate': ImpersonateTarget('chrome'),
         'extractor_args': {'youtube': {'player_client': ['ios', 'mweb', 'web']}},
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
