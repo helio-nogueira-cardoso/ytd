@@ -9,12 +9,21 @@ save the MP4. Tkinter UI, `yt-dlp` under the hood, `ffmpeg` bundled.
 
 ## Features
 
-- One-field UI — paste a YouTube URL, press Enter, save the file.
+- One-field UI — paste a YouTube URL, press Enter, done.
 - Downloads the best available video + audio and merges into MP4.
 - Live progress bar with download speed.
-- File is renamed to the (sanitized) video title at save time.
+- Configurable download folder — set once on first launch, change anytime
+  via **Configurações → Pasta de download...**
+- Files are named after the video title (sanitized).
 - Bundled `ffmpeg` in the released executables — no extra installs.
 - Pre-built binaries for **Windows** and **Linux** on every tagged release.
+
+## Where the config lives
+
+The download folder is persisted across sessions in:
+
+- **Linux/macOS:** `~/.config/ytd/config.json` (or `$XDG_CONFIG_HOME/ytd/`)
+- **Windows:** `%APPDATA%\ytd\config.json`
 
 ## Why a desktop app
 
