@@ -3,6 +3,7 @@ import yt_dlp
 import os
 import re
 import time
+import traceback
 from tempfile import gettempdir
 
 def sanitize_filename(name):
@@ -100,7 +101,8 @@ def main():
             with st.spinner('Fetching video...'):
                 filepath, info = download_video(url.strip())
         except Exception as e:
-            st.error(f'Download failed: {e}')
+            st.error(f'Download failed: [{type(e).__name__}] {repr(e) or "(no message)"}')
+            st.code(traceback.format_exc(), language='text')
             return
 
         if not (filepath and os.path.exists(filepath)):
