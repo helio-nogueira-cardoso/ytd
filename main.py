@@ -14,17 +14,26 @@ def sanitize_filename(name):
 def download_video(url):
     out_dir = gettempdir()
     outtmpl = os.path.join(out_dir, 'ytd_%(id)s.%(ext)s')
-    ydl_opts = {
-        'format': 'bv*+ba/best',
-        'outtmpl': outtmpl,
+    base_opts = {
         'noplaylist': True,
-        'merge_output_format': 'mp4',
         'impersonate': ImpersonateTarget('chrome'),
-        'extractor_args': {'youtube': {'player_client': ['ios', 'mweb', 'web']}},
+        'extractor_args': {'youtube': {'player_client': ['web', 'mweb', 'ios', 'tv_embedded']}},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filepath = ydl.prepare_filename(info)
+    ydl_opts = {
+        **base_opts,
+        'format': 'bv*+ba/b/bv*/ba',
+        'outtmpl': outtmpl,
+        'merge_output_format': 'mp4',
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filepath = ydl.prepare_filename(info)
+    except yt_dlp.utils.DownloadError as e:
+        with yt_dlp.YoutubeDL(base_opts) as probe:
+            probe_info = probe.extract_info(url, download=False)
+        fmts = [(f.get('format_id'), f.get('ext'), f.get('vcodec'), f.get('acodec'), f.get('format_note')) for f in (probe_info.get('formats') or [])]
+        raise RuntimeError(f'{e}\n\nAvailable formats ({len(fmts)}): {fmts[:25]}') from e
     if not os.path.exists(filepath):
         base, _ = os.path.splitext(filepath)
         for ext in ('.mp4', '.mkv', '.webm', '.m4a'):
