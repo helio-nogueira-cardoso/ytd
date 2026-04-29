@@ -16,8 +16,6 @@ def download_video(url):
         'format': 'best[ext=mp4]/best',
         'outtmpl': outtmpl,
         'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
         'merge_output_format': 'mp4',
         'impersonate': 'chrome',
         'extractor_args': {'youtube': {'player_client': ['ios', 'mweb', 'web']}},
@@ -27,11 +25,15 @@ def download_video(url):
         filepath = ydl.prepare_filename(info)
     if not os.path.exists(filepath):
         base, _ = os.path.splitext(filepath)
-        for ext in ('.mp4', '.mkv', '.webm'):
+        for ext in ('.mp4', '.mkv', '.webm', '.m4a'):
             candidate = base + ext
             if os.path.exists(candidate):
                 filepath = candidate
                 break
+        else:
+            video_id = info.get('id', '') if isinstance(info, dict) else ''
+            matches = [f for f in os.listdir(out_dir) if video_id and video_id in f]
+            raise RuntimeError(f'expected file not found at {filepath}; matching id in temp dir: {matches}')
     return filepath, info if isinstance(info, dict) else {}
 
 def cleanup_old_files(directory, prefix='ytd_', age_limit_seconds=600):
