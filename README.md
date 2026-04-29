@@ -1,170 +1,106 @@
 # YTD — YouTube Downloader
 
-A small, friendly Streamlit web app that downloads YouTube videos to your device
-as MP4. Paste a URL, press Enter, and save the file.
+A small desktop YouTube downloader. Paste a URL, hit Download, choose where to
+save the MP4. Tkinter UI, `yt-dlp` under the hood, `ffmpeg` bundled.
 
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
-![Streamlit](https://img.shields.io/badge/built%20with-Streamlit-ff4b4b)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
 ---
 
 ## Features
 
-- One-field UI — paste a YouTube URL and go.
-- Downloads the **best available MP4** (progressive or merged by `yt-dlp`).
-- Shows the video **thumbnail, title, uploader and duration** before saving.
-- File is renamed to the video title (sanitized for the filesystem).
-- Submits on **Enter** (form) and on button click.
-- Automatic cleanup of stale temp files between downloads.
-- Works locally and on any platform that can run a Python web app
-  (Heroku-style PaaS, a VPS, a container, etc.).
+- One-field UI — paste a YouTube URL, press Enter, save the file.
+- Downloads the best available video + audio and merges into MP4.
+- Live progress bar with download speed.
+- File is renamed to the (sanitized) video title at save time.
+- Bundled `ffmpeg` in the released executables — no extra installs.
+- Pre-built binaries for **Windows** and **Linux** on every tagged release.
 
-## Tech stack
+## Why a desktop app
 
-- [Streamlit](https://streamlit.io/) — UI
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — downloader engine
-- Python 3.9+
+YouTube actively blocks downloads from datacenter IPs (cloud hosts / VPS).
+Running on your own machine uses your residential IP, which is what
+`yt-dlp` is designed for. The previous Streamlit version was migrated to
+a native Tkinter app for this reason.
 
-> Note: the app originally used `pytube`, which has been unreliable against
-> YouTube's current endpoints. It was migrated to `yt-dlp`, which is actively
-> maintained.
+## Install — pre-built binary (recommended)
 
-## Requirements
+Grab the latest from the [Releases page](https://github.com/helio-nogueira-cardoso/ytd/releases):
 
-- Python **3.9+** (tested on 3.13)
-- `pip` / `venv`
-- An active internet connection
+- **Windows:** `ytd.exe` — double-click to run.
+- **Linux:** `ytd` — `chmod +x ytd && ./ytd`.
 
-## Quick start (local)
+No Python or `ffmpeg` install needed.
+
+## Install — from source
 
 ```bash
-# 1. Clone
 git clone https://github.com/helio-nogueira-cardoso/ytd.git
 cd ytd
-
-# 2. Create and activate a virtual environment
 python3 -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-
-# 3. Install dependencies
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# 4. Run
-streamlit run main.py
+python main.py
 ```
 
-Streamlit will open the app at http://localhost:8501.
+Requires Python 3.10+. On Linux you may need `python3-tk` (Debian/Ubuntu:
+`sudo apt install python3-tk`).
 
-## Usage
+## Building locally
 
-1. Open the app in your browser.
-2. Paste a YouTube URL into the input field.
-3. Press **Enter** or click **Download**.
-4. Wait for the spinner to finish. You'll see the thumbnail, title and duration.
-5. Click **Save video** to download the MP4 to your machine.
+```bash
+pip install pyinstaller
+pyinstaller --onefile --windowed --name ytd \
+    --collect-all imageio_ffmpeg \
+    --collect-all yt_dlp \
+    --collect-all curl_cffi \
+    main.py
+```
 
-## How it works
+The binary lands in `dist/`.
 
-- `yt-dlp` fetches the video metadata and streams, picking the best
-  `mp4` progressive format (or merging audio + video when needed).
-- The file is written to the OS temp directory under a `ytd_<videoId>.mp4`
-  name so it can be safely cleaned up later.
-- Streamlit serves the file via `st.download_button`, renaming it to the
-  sanitized video title on the client side.
-- Before every download, files older than 10 minutes that match the `ytd_`
-  prefix are removed to keep the temp directory tidy.
+## Releasing
+
+The GitHub Actions workflow `.github/workflows/build.yml` builds Windows
+and Linux binaries automatically on every tag matching `v*` and attaches
+them to a GitHub Release.
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Watch the run under the repo's "Actions" tab. Artifacts also appear on
+manual runs (workflow_dispatch) for testing.
 
 ## Project structure
 
 ```
 .
-├── main.py            # Streamlit app (UI + download logic)
-├── requirements.txt   # Python dependencies (streamlit, yt-dlp)
-├── Procfile           # PaaS entrypoint (Heroku-compatible)
-├── setup.sh           # Generates a valid ~/.streamlit/config.toml at boot
+├── main.py                       # Tkinter app + yt-dlp logic
+├── requirements.txt              # yt-dlp, curl-cffi, imageio-ffmpeg
+├── .github/workflows/build.yml   # cross-platform release builds
 ├── .gitignore
 └── README.md
 ```
 
-## Deployment
-
-The repository is ready for Heroku-style PaaS deployment.
-
-- `Procfile` declares the web process:
-  `web: sh setup.sh && streamlit run main.py`
-- `setup.sh` writes a valid Streamlit config honoring the `$PORT` env var.
-
-Generic steps:
-
-```bash
-# Heroku CLI
-heroku create <app-name>
-git push heroku main
-heroku open
-```
-
-On Railway, Render, Fly.io, etc., point the service at `main` and use the same
-start command from the `Procfile`.
-
-### Running in Docker (optional)
-
-```dockerfile
-FROM python:3.13-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-ENV PORT=8501
-EXPOSE 8501
-CMD ["sh", "-c", "streamlit run main.py --server.port=$PORT --server.headless=true"]
-```
-
-## Configuration
-
-Streamlit looks for `~/.streamlit/config.toml`. `setup.sh` creates one with:
-
-```toml
-[server]
-headless = true
-enableCORS = false
-port = $PORT   # defaults to 8501
-```
-
-Useful environment variables:
-
-| Variable | Purpose                                  | Default |
-|----------|------------------------------------------|---------|
-| `PORT`   | Port Streamlit binds to (PaaS providers) | `8501`  |
-
 ## Troubleshooting
 
-- **`HTTP 400 Bad Request` when downloading** — usually means `yt-dlp` is out
-  of date. Bump it: `pip install --upgrade yt-dlp`.
-- **`Error parsing config toml`** — the `~/.streamlit/config.toml` file is
-  malformed. Delete it (`rm ~/.streamlit/config.toml`) and re-run
-  `sh setup.sh`, or remove the file entirely and let Streamlit use defaults.
-- **`ffmpeg not found`** — some formats require `ffmpeg` to merge video and
-  audio. Install it via your package manager (`sudo apt install ffmpeg` /
-  `brew install ffmpeg`). The default `best[ext=mp4]` format rarely needs it.
-- **"Download failed" for a specific URL** — age-restricted, region-blocked,
-  or private videos cannot be downloaded without extra authentication.
-
-## Development
-
-Auto-reload is built into Streamlit — just save the file and the browser
-reloads. To validate without opening the browser:
-
-```bash
-python -c "import ast; ast.parse(open('main.py').read())"
-```
+- **"Sign in to confirm you're not a bot"** — your IP is being challenged
+  by YouTube. Usually only happens on cloud/VPS IPs; residential
+  connections rarely hit this. Try again or switch network.
+- **`yt-dlp` errors after a YouTube change** — bump the dep:
+  `pip install --upgrade yt-dlp` (and rebuild the binary if you ship one).
+- **Linux: `ModuleNotFoundError: No module named 'tkinter'`** — install
+  the Tk binding for Python: `sudo apt install python3-tk`.
 
 ## Disclaimer
 
-This project is provided for **personal and educational use only**. Downloading
-YouTube videos may violate [YouTube's Terms of Service](https://www.youtube.com/t/terms)
-unless the content is clearly offered for offline download (for example, via
-YouTube Premium) or is in the public domain / released under a permissive
-license. The author is not responsible for how this tool is used.
+For personal and educational use only. Downloading YouTube videos may
+violate [YouTube's Terms of Service](https://www.youtube.com/t/terms)
+unless the content is offered for offline download (e.g. via YouTube
+Premium) or is in the public domain / under a permissive license. The
+author is not responsible for how this tool is used.
 
 ## Author
 

@@ -1,67 +1,25 @@
-import streamlit as st
-import yt_dlp
 import os
 import re
-import time
-import traceback
+import shutil
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 from tempfile import gettempdir
+
+import yt_dlp
 from yt_dlp.networking.impersonate import ImpersonateTarget
+
+try:
+    import imageio_ffmpeg
+    FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:
+    FFMPEG_PATH = None
+
 
 def sanitize_filename(name):
     name = re.sub(r'[\\/*?:"<>|]', '_', name)
     return name.strip()[:120] or 'video'
 
-def download_video(url):
-    out_dir = gettempdir()
-    outtmpl = os.path.join(out_dir, 'ytd_%(id)s.%(ext)s')
-    base_opts = {
-        'noplaylist': True,
-        'impersonate': ImpersonateTarget('chrome'),
-        'extractor_args': {'youtube': {'player_client': ['web', 'mweb', 'ios', 'tv_embedded']}},
-    }
-    ydl_opts = {
-        **base_opts,
-        'format': 'bv*+ba/b/bv*/ba',
-        'outtmpl': outtmpl,
-        'merge_output_format': 'mp4',
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filepath = ydl.prepare_filename(info)
-    except yt_dlp.utils.DownloadError as e:
-        with yt_dlp.YoutubeDL(base_opts) as probe:
-            probe_info = probe.extract_info(url, download=False)
-        fmts = [(f.get('format_id'), f.get('ext'), f.get('vcodec'), f.get('acodec'), f.get('format_note')) for f in (probe_info.get('formats') or [])]
-        raise RuntimeError(f'{e}\n\nAvailable formats ({len(fmts)}): {fmts[:25]}') from e
-    if not os.path.exists(filepath):
-        base, _ = os.path.splitext(filepath)
-        for ext in ('.mp4', '.mkv', '.webm', '.m4a'):
-            candidate = base + ext
-            if os.path.exists(candidate):
-                filepath = candidate
-                break
-        else:
-            video_id = info.get('id', '') if isinstance(info, dict) else ''
-            matches = [f for f in os.listdir(out_dir) if video_id and video_id in f]
-            raise RuntimeError(f'expected file not found at {filepath}; matching id in temp dir: {matches}')
-    return filepath, info if isinstance(info, dict) else {}
-
-def cleanup_old_files(directory, prefix='ytd_', age_limit_seconds=600):
-    current_time = time.time()
-    try:
-        entries = os.listdir(directory)
-    except OSError:
-        return
-    for filename in entries:
-        if not filename.startswith(prefix):
-            continue
-        file_path = os.path.join(directory, filename)
-        try:
-            if os.path.isfile(file_path) and current_time - os.path.getmtime(file_path) > age_limit_seconds:
-                os.remove(file_path)
-        except OSError:
-            pass
 
 def format_duration(seconds):
     try:
@@ -72,89 +30,172 @@ def format_duration(seconds):
     m, s = divmod(rem, 60)
     return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
 
-def main():
-    st.set_page_config(
-        page_title='YTD — YouTube Downloader',
-        page_icon='▶️',
-        layout='centered',
-    )
 
-    st.markdown(
-        """
-        <div style="text-align:center; padding: 0.5rem 0 1rem;">
-            <div style="font-size:2.4rem; font-weight:700; letter-spacing:-0.02em;">
-                ▶️ YouTube Downloader
-            </div>
-            <div style="color:#8a8f98; margin-top:0.25rem;">
-                Paste a YouTube URL and grab the best available MP4.
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.divider()
+def download_video(url, progress_hook=None):
+    out_dir = gettempdir()
+    outtmpl = os.path.join(out_dir, 'ytd_%(id)s.%(ext)s')
+    ydl_opts = {
+        'format': 'bv*+ba/b/bv*/ba',
+        'outtmpl': outtmpl,
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'merge_output_format': 'mp4',
+        'impersonate': ImpersonateTarget('chrome'),
+    }
+    if FFMPEG_PATH:
+        ydl_opts['ffmpeg_location'] = FFMPEG_PATH
+    if progress_hook:
+        ydl_opts['progress_hooks'] = [progress_hook]
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filepath = ydl.prepare_filename(info)
+    if not os.path.exists(filepath):
+        base, _ = os.path.splitext(filepath)
+        for ext in ('.mp4', '.mkv', '.webm', '.m4a'):
+            candidate = base + ext
+            if os.path.exists(candidate):
+                filepath = candidate
+                break
+    return filepath, info if isinstance(info, dict) else {}
 
-    with st.form('download_form', clear_on_submit=False):
-        url = st.text_input(
-            'YouTube URL',
-            placeholder='https://www.youtube.com/watch?v=...',
-            label_visibility='collapsed',
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title('YouTube Downloader')
+        self.geometry('560x300')
+        self.minsize(560, 300)
+        self.configure(padx=24, pady=20)
+
+        self._tmp_filepath = None
+        self._info = None
+
+        title = tk.Label(self, text='YouTube Downloader', font=('Helvetica', 18, 'bold'))
+        title.pack(anchor='w')
+
+        sub = tk.Label(
+            self,
+            text='Cole uma URL do YouTube e baixe o melhor MP4 disponível.',
+            fg='#666',
         )
-        submitted = st.form_submit_button('Download', use_container_width=True)
+        sub.pack(anchor='w', pady=(2, 16))
 
-    if submitted:
-        if not url.strip():
-            st.warning('Please enter a YouTube URL.')
+        row = tk.Frame(self)
+        row.pack(fill='x')
+
+        self._url_var = tk.StringVar()
+        entry = tk.Entry(row, textvariable=self._url_var)
+        entry.pack(side='left', fill='x', expand=True, padx=(0, 8), ipady=6)
+        entry.bind('<Return>', lambda _e: self._start_download())
+        entry.focus_set()
+
+        self._download_btn = tk.Button(row, text='Download', width=12, command=self._start_download)
+        self._download_btn.pack(side='left')
+
+        self._progress = ttk.Progressbar(self, mode='determinate', maximum=100)
+        self._progress.pack(fill='x', pady=(16, 6))
+
+        self._status_var = tk.StringVar(value='')
+        self._status = tk.Label(self, textvariable=self._status_var, fg='#666', anchor='w', justify='left', wraplength=510)
+        self._status.pack(fill='x')
+
+        self._info_var = tk.StringVar(value='')
+        self._info_label = tk.Label(self, textvariable=self._info_var, fg='#222', anchor='w', justify='left', wraplength=510)
+        self._info_label.pack(fill='x', pady=(8, 0))
+
+        self._save_btn = tk.Button(self, text='Salvar vídeo...', width=20, state='disabled', command=self._save_video)
+        self._save_btn.pack(pady=(14, 0))
+
+    def _set_status(self, text, color='#666'):
+        self._status_var.set(text)
+        self._status.config(fg=color)
+
+    def _start_download(self):
+        url = self._url_var.get().strip()
+        if not url:
+            self._set_status('Informe uma URL.', color='#a00')
             return
-        cleanup_old_files(gettempdir())
+        self._tmp_filepath = None
+        self._info = None
+        self._info_var.set('')
+        self._save_btn.config(state='disabled')
+        self._download_btn.config(state='disabled')
+        self._progress['value'] = 0
+        self._set_status('Buscando vídeo...')
+        threading.Thread(target=self._worker, args=(url,), daemon=True).start()
+
+    def _worker(self, url):
         try:
-            with st.spinner('Fetching video...'):
-                filepath, info = download_video(url.strip())
+            filepath, info = download_video(url, progress_hook=self._progress_hook)
         except Exception as e:
-            st.error(f'Download failed: [{type(e).__name__}] {repr(e) or "(no message)"}')
-            st.code(traceback.format_exc(), language='text')
+            self.after(0, self._on_error, e)
             return
+        self.after(0, self._on_done, filepath, info)
 
+    def _progress_hook(self, d):
+        status = d.get('status')
+        if status == 'downloading':
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            done = d.get('downloaded_bytes') or 0
+            pct = (done / total * 100) if total else 0
+            speed = d.get('speed') or 0
+            speed_str = f'{speed / 1024 / 1024:.1f} MB/s' if speed else ''
+            text = f'Baixando... {pct:.0f}%  {speed_str}'.strip()
+            self.after(0, self._update_progress, pct, text)
+        elif status == 'finished':
+            self.after(0, self._update_progress, 100, 'Processando...')
+
+    def _update_progress(self, pct, text):
+        self._progress['value'] = pct
+        self._set_status(text)
+
+    def _on_error(self, e):
+        self._download_btn.config(state='normal')
+        self._progress['value'] = 0
+        self._set_status(f'Falha: {e}', color='#a00')
+
+    def _on_done(self, filepath, info):
+        self._download_btn.config(state='normal')
         if not (filepath and os.path.exists(filepath)):
-            st.error('Download failed. Check the URL and try again.')
+            self._set_status('O arquivo baixado não foi encontrado.', color='#a00')
             return
-
+        self._tmp_filepath = filepath
+        self._info = info
         title = info.get('title') or 'video'
-        uploader = info.get('uploader') or info.get('channel')
-        duration = format_duration(info.get('duration'))
-        thumbnail = info.get('thumbnail')
+        uploader = info.get('uploader') or info.get('channel') or ''
+        duration = format_duration(info.get('duration')) or ''
+        meta = ' · '.join(x for x in (uploader, duration) if x)
+        self._info_var.set(f'{title}\n{meta}' if meta else title)
+        self._set_status('Pronto. Clique em "Salvar vídeo" pra escolher o destino.', color='#070')
+        self._save_btn.config(state='normal')
 
-        st.success('Ready! Click below to save the video.')
+    def _save_video(self):
+        if not self._tmp_filepath or not os.path.exists(self._tmp_filepath):
+            self._set_status('O arquivo temporário não existe mais.', color='#a00')
+            return
+        title = (self._info or {}).get('title') or 'video'
+        ext = os.path.splitext(self._tmp_filepath)[1] or '.mp4'
+        suggested = sanitize_filename(title) + ext
+        target = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=ext,
+            initialfile=suggested,
+            filetypes=[('MP4 video', '*.mp4'), ('All files', '*.*')],
+        )
+        if not target:
+            return
+        try:
+            shutil.copyfile(self._tmp_filepath, target)
+        except OSError as e:
+            messagebox.showerror('Erro', f'Não foi possível salvar: {e}')
+            return
+        self._set_status(f'Salvo em {target}', color='#070')
 
-        with st.container(border=True):
-            cols = st.columns([1, 2])
-            with cols[0]:
-                if thumbnail:
-                    st.image(thumbnail, use_container_width=True)
-            with cols[1]:
-                st.markdown(f'**{title}**')
-                meta = ' · '.join(x for x in (uploader, duration) if x)
-                if meta:
-                    st.caption(meta)
 
-            filename = sanitize_filename(title) + os.path.splitext(filepath)[1]
-            with open(filepath, 'rb') as file:
-                st.download_button(
-                    label='⬇️  Save video',
-                    data=file,
-                    file_name=filename,
-                    mime='video/mp4',
-                    use_container_width=True,
-                )
+def main():
+    App().mainloop()
 
-    st.markdown(
-        """
-        <div style="text-align:center; color:#8a8f98; font-size:0.8rem; margin-top:2rem;">
-            by Helio Nogueira Cardoso
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 if __name__ == '__main__':
     main()
