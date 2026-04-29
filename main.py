@@ -15,7 +15,7 @@ def download_video(url):
     out_dir = gettempdir()
     outtmpl = os.path.join(out_dir, 'ytd_%(id)s.%(ext)s')
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
+        'format': 'bv*+ba/best',
         'outtmpl': outtmpl,
         'noplaylist': True,
         'merge_output_format': 'mp4',
